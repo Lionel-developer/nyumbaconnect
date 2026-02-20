@@ -224,9 +224,19 @@ const getPropertyById = async (req, res) => {
       property.landlordId &&
       property.landlordId.toString() === req.user._id.toString();
 
+    let isUnlocked = false;
+
+    if (!isOwner && req.user) {
+      const unlocked = await User.exists({
+        _id: req.user._id,
+        'unlockedProperties.property': property._id,
+      });
+      isUnlocked = !!unlocked;
+    }
+
     const data = property.toObject();
 
-    if (!isOwner) {
+    if (!isOwner && !isUnlocked) {
       delete data.contactPerson;
       delete data.contactPhone;
     }
@@ -234,7 +244,7 @@ const getPropertyById = async (req, res) => {
     return res.json({
       success: true,
       data: { property: data },
-      visibility: isOwner ? 'owner' : 'public',
+      visibility: isOwner ? 'owner' : isUnlocked ? 'unlocked' : 'public',
     });
   } catch (error) {
     console.error('Get property error:', error);
@@ -398,6 +408,8 @@ const deleteProperty = async (req, res) => {
   }
 };
 
+//Images
+
 const addPropertyImage = async (req, res) => {
   try {
     const { url, isPrimary } = req.body || {};
@@ -533,7 +545,68 @@ const removePropertyImage = async (req, res) => {
     });
   }
 };
+const uploadPropertyImage = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No image file uploaded' });
+    }
 
+    const property = await Property.findById(req.params.id);
+    if (!property || property.isActive === false) {
+      return res.status(404).json({ success: false, message: 'Property not found' });
+    }
+
+    const isOwner = property.landlordId.toString() === req.user._id.toString();
+    if (!isOwner) {
+      return res.status(403).json({ success: false, message: 'Forbidden' });
+    }
+
+    if ((property.images || []).length >= MAX_IMAGES_PER_PROPERTY) {
+      return res.status(400).json({
+        success: false,
+        message: `Maximum ${MAX_IMAGES_PER_PROPERTY} images allowed per property`,
+      });
+    }
+
+    // build a safe URL that points to your static uploads route
+    const url = `/uploads/${req.file.filename}`;
+
+    const dup = (property.images || []).some(
+      (img) => String(img.url).trim().toLowerCase() === url.toLowerCase()
+    );
+    if (dup) {
+      return res.status(400).json({ success: false, message: 'Image already added' });
+    }
+
+    const makePrimary = req.body?.isPrimary === true || String(req.body?.isPrimary) === 'true';
+
+    if (makePrimary) {
+      property.images = property.images.map((img) => ({ ...img.toObject(), isPrimary: false }));
+    }
+
+    property.images.push({ url, isPrimary: makePrimary });
+
+    if (property.images.length === 1 && !property.images[0].isPrimary) {
+      property.images[0].isPrimary = true;
+    }
+
+    await property.save();
+
+    return res.json({
+      success: true,
+      message: 'Image uploaded',
+      data: { images: property.images, url },
+    });
+  } catch (error) {
+    console.error('Upload property image error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error uploading image',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+};
+//Favorites
 const addFavorite = async (req, res) => {
   try {
     const propertyId = req.params.id;
@@ -657,6 +730,57 @@ const listFavorites = async (req, res) => {
     });
   }
 };
+const unlockProperty = async (req, res) => {
+  try {
+    const propertyId = req.params.id;
+
+    const property = await Property.findById(propertyId).select('_id isActive landlordId');
+    if (!property || property.isActive === false) {
+      return res.status(404).json({ success: false, message: 'Property not found' });
+    }
+
+    // Prevent owners from "unlocking" their own property
+    if (property.landlordId.toString() === req.user._id.toString()) {
+      return res.status(400).json({ success: false, message: 'You already own this property' });
+    }
+
+    // Check if already unlocked (avoid duplicates)
+    const alreadyUnlocked = await User.exists({
+      _id: req.user._id,
+      'unlockedProperties.property': property._id,
+    });
+
+    if (alreadyUnlocked) {
+      return res.json({ success: true, message: 'Already unlocked' });
+    }
+
+    await Promise.all([
+      User.findByIdAndUpdate(req.user._id, {
+        $addToSet: {
+          unlockedProperties: {
+            property: property._id,
+            unlockedAt: new Date(),
+            transactionId: null,
+          },
+        },
+      }),
+      Property.findByIdAndUpdate(property._id, { $inc: { totalUnlocks: 1 } }),
+    ]);
+
+    return res.json({
+      success: true,
+      message: 'Property unlocked',
+      data: { propertyId: String(property._id) },
+    });
+  } catch (error) {
+    console.error('Unlock property error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error unlocking property',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+};
 
 module.exports = {
   createProperty,
@@ -671,4 +795,6 @@ module.exports = {
   addFavorite,
   removeFavorite,
   listFavorites,
+  uploadPropertyImage,
+  unlockProperty,
 };

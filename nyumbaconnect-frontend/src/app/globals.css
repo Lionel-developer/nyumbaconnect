@@ -1,0 +1,11 @@
+@import "tailwindcss";
+
+:root{
+  --taupe-300: #d7c3b5; /* change to your exact taupe */
+}
+
+html, body { height: 100%; }
+
+body {
+  @apply bg-neutral-300 text-zinc-900 antialiased;
+}
