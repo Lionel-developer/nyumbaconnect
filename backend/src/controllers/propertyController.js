@@ -18,12 +18,45 @@ const isValidHttpUrl = (value) => {
 
 const normalizeUrl = (value) => value.trim();
 
+// keep normalization logic consistent with your schema hook
+const normalizeText = (value) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+
 const createProperty = async (req, res) => {
   try {
     const landlordId = req.user._id;
 
+    // Friendly duplicate check (prevents exact matches)
+    const titleNorm = normalizeText(req.body.title);
+    const locationNorm = normalizeText(req.body.location);
+    const areaNorm = normalizeText(req.body.area);
+
+    const exists = await Property.exists({
+      landlordId,
+      titleNorm,
+      locationNorm,
+      areaNorm,
+      price: req.body.price,
+      propertyType: req.body.propertyType,
+      isActive: { $ne: false },
+    });
+
+    if (exists) {
+      return res.status(409).json({
+        success: false,
+        message: 'Duplicate listing detected (same title, location, area, type and price).',
+      });
+    }
+
     const property = await Property.create({
       ...req.body,
+      // pass normalized fields so even if schema hook changes, this stays consistent
+      titleNorm,
+      locationNorm,
+      areaNorm,
       landlordId,
       contactPerson: req.body.contactPerson || req.user.fullName,
       contactPhone: req.body.contactPhone || req.user.phoneNumber,
@@ -45,6 +78,15 @@ const createProperty = async (req, res) => {
     });
   } catch (error) {
     console.error('Create property error:', error);
+
+    // Handle Mongo duplicate key error (unique index)
+    if (error && error.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: 'Duplicate listing detected.',
+      });
+    }
+
     return res.status(500).json({
       success: false,
       message: 'Server error creating property',
@@ -73,7 +115,7 @@ const listProperties = async (req, res) => {
       q,
     } = req.query;
 
-    const filter = { isActive: true };
+    const filter = { isActive: { $ne: false } };
 
     if (location) filter.location = { $regex: String(location).trim(), $options: 'i' };
     if (area) filter.area = { $regex: String(area).trim(), $options: 'i' };
@@ -274,7 +316,7 @@ const listMyProperties = async (req, res) => {
         else sortObj[field] = 1;
       });
 
-    const filter = { landlordId: req.user._id, isActive: true };
+    const filter = { landlordId: req.user._id, isActive: { $ne: false } };
 
     const pipeline = [
       { $match: filter },
@@ -545,6 +587,7 @@ const removePropertyImage = async (req, res) => {
     });
   }
 };
+
 const uploadPropertyImage = async (req, res) => {
   try {
     if (!req.file) {
@@ -606,6 +649,7 @@ const uploadPropertyImage = async (req, res) => {
     });
   }
 };
+
 //Favorites
 const addFavorite = async (req, res) => {
   try {
@@ -673,7 +717,7 @@ const listFavorites = async (req, res) => {
         else sortObj[field] = 1;
       });
 
-    const match = { _id: { $in: user.favorites }, isActive: true };
+    const match = { _id: { $in: user.favorites }, isActive: { $ne: false } };
 
     const pipeline = [
       { $match: match },
@@ -730,6 +774,7 @@ const listFavorites = async (req, res) => {
     });
   }
 };
+
 const unlockProperty = async (req, res) => {
   try {
     const propertyId = req.params.id;

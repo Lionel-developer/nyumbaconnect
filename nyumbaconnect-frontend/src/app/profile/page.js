@@ -7,13 +7,11 @@ import { getAuth } from "../lib/auth";
 
 export default function ProfilePage() {
   const router = useRouter();
-  const [auth, setAuth] = useState({ token: null, user: null });
+  const [auth] = useState(() => getAuth());
 
   useEffect(() => {
-    const a = getAuth();
-    setAuth(a);
-    if (!a.token) router.push("/login?next=/profile");
-  }, [router]);
+    if (!auth.token) router.push("/login?next=/profile");
+  }, [auth.token, router]);
 
   const user = auth.user;
 

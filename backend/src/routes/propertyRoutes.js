@@ -23,22 +23,31 @@ const {
   unlockProperty,
 } = require('../controllers/propertyController');
 
+// Public
 router.get('/', listProperties);
-router.get('/my-properties', protect, requireRole('landlord', 'agent'), listMyProperties);
 
-router.post('/:id/unlock', protect, requireRole('tenant'), unlockProperty);
-
+// Tenant
 router.get('/favorites', protect, requireRole('tenant'), listFavorites);
+
+// Landlord/Agent
+router.get('/mine', protect, requireRole('landlord', 'agent'), listMyProperties);
+
+// Actions
+router.post('/:id/unlock', protect, requireRole('tenant'), unlockProperty);
 router.post('/:id/favorite', protect, requireRole('tenant'), addFavorite);
 router.delete('/:id/favorite', protect, requireRole('tenant'), removeFavorite);
 
-router.get('/:id', optionalProtect, getPropertyById);
+// CRUD
 router.post('/', protect, requireRole('landlord', 'agent'), createProperty);
-router.put('/:id', protect, requireRole('landlord', 'agent'), updateProperty);
-router.delete('/:id', protect, requireRole('landlord', 'agent'), deleteProperty);
 
+// Images (landlord/agent)
 router.post('/:id/images', protect, requireRole('landlord', 'agent'), addPropertyImage);
-router.patch('/:id/images/:imageId/primary', protect, requireRole('landlord', 'agent'), setPrimaryImage);
+router.patch(
+  '/:id/images/:imageId/primary',
+  protect,
+  requireRole('landlord', 'agent'),
+  setPrimaryImage
+);
 router.delete('/:id/images/:imageId', protect, requireRole('landlord', 'agent'), removePropertyImage);
 router.post(
   '/:id/images/upload',
@@ -47,4 +56,10 @@ router.post(
   uploadImage.single('image'),
   uploadPropertyImage
 );
+
+// ✅ Keep :id route last
+router.get('/:id', optionalProtect, getPropertyById);
+router.put('/:id', protect, requireRole('landlord', 'agent'), updateProperty);
+router.delete('/:id', protect, requireRole('landlord', 'agent'), deleteProperty);
+
 module.exports = router;

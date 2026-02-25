@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { api } from "../../lib/api";
+import { getAuth } from "../../lib/auth";
 
 export default function PropertyDetailsPage() {
   const { id } = useParams();
@@ -14,14 +16,49 @@ export default function PropertyDetailsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const isLoggedIn =
-    typeof window !== "undefined" && !!localStorage.getItem("token");
+  // ✅ stable during first render
+  const [auth, setAuth] = useState({ token: null, user: null });
+  const [authReady, setAuthReady] = useState(false);
 
-  const fetchProperty = async () => {
+  useEffect(() => {
+    try {
+      setAuth(getAuth());
+    } finally {
+      setAuthReady(true);
+    }
+  }, []);
+
+  // keep auth in sync if login/logout happens elsewhere
+  useEffect(() => {
+    const refreshAuth = () => setAuth(getAuth());
+    if (typeof window !== "undefined") {
+      window.addEventListener("focus", refreshAuth);
+      window.addEventListener("storage", refreshAuth);
+    }
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("focus", refreshAuth);
+        window.removeEventListener("storage", refreshAuth);
+      }
+    };
+  }, []);
+
+  const isLoggedIn = !!auth.token;
+
+  // landlord/agent check (your user uses userType)
+  const isLandlordOrAgent = useMemo(() => {
+    const t = String(auth?.user?.userType || "").toLowerCase();
+    return t === "landlord" || t === "agent";
+  }, [auth]);
+
+  // show edit link only for owners (backend marks this as "owner")
+  const canEdit = isLoggedIn && isLandlordOrAgent && visibility === "owner";
+
+  const fetchProperty = useCallback(async () => {
     const res = await api.get(`/api/properties/${id}`);
     setProperty(res.data?.data?.property || null);
     setVisibility(res.data?.visibility || "public");
-  };
+  }, [id]);
 
   useEffect(() => {
     let mounted = true;
@@ -42,11 +79,12 @@ export default function PropertyDetailsPage() {
     return () => {
       mounted = false;
     };
-  }, [id]);
+  }, [fetchProperty]);
 
   const onUnlock = async () => {
-    if (!isLoggedIn) {
-      router.push("/login");
+    // If auth status isn't loaded yet, treat as not logged in
+    if (!authReady || !isLoggedIn) {
+      router.push(`/login?next=/properties/${id}`);
       return;
     }
 
@@ -99,9 +137,20 @@ export default function PropertyDetailsPage() {
   return (
     <main className="min-h-screen bg-neutral-300 text-zinc-900 px-4 py-5 sm:px-6">
       <div className="mx-auto w-full max-w-5xl">
-        <button className="underline" onClick={() => router.back()}>
-          ← Back
-        </button>
+        <div className="flex items-center justify-between gap-3">
+          <button className="underline" onClick={() => router.back()}>
+            ← Back
+          </button>
+
+          {canEdit && (
+            <Link
+              href={`/my-properties/${id}/edit`}
+              className="rounded-2xl bg-sky-300 px-4 py-2 text-sm font-semibold"
+            >
+              Edit listing
+            </Link>
+          )}
+        </div>
 
         <div className="mt-4 grid gap-4 sm:gap-6 lg:grid-cols-2">
           {/* Images */}
@@ -151,9 +200,9 @@ export default function PropertyDetailsPage() {
             </p>
 
             <div className="mt-3 flex flex-wrap gap-2">
-              {property.type && (
+              {(property.propertyType || property.type) && (
                 <span className="rounded-full bg-neutral-300 px-3 py-1 text-xs font-medium">
-                  {property.type}
+                  {property.propertyType || property.type}
                 </span>
               )}
               <span className="rounded-full bg-neutral-300 px-3 py-1 text-xs font-medium">
@@ -190,7 +239,7 @@ export default function PropertyDetailsPage() {
                     {busy ? "Unlocking…" : "Unlock contact"}
                   </button>
 
-                  {!isLoggedIn && (
+                  {authReady && !isLoggedIn && (
                     <p className="mt-2 text-xs opacity-70">
                       You’ll be asked to login first.
                     </p>

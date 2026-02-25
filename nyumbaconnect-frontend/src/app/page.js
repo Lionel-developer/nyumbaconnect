@@ -12,13 +12,36 @@ export default function Home() {
 
   const [brokenImages, setBrokenImages] = useState(() => new Set());
 
+  // ✅ Start with a stable value to avoid hydration mismatch
   const [auth, setAuth] = useState({ token: null, user: null });
+  const [authReady, setAuthReady] = useState(false);
 
   const [query, setQuery] = useState("");
   const [metric, setMetric] = useState("all");
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
+  // ✅ Read auth only after mount (client-side)
   useEffect(() => {
-    setAuth(getAuth());
+    try {
+      setAuth(getAuth());
+    } finally {
+      setAuthReady(true);
+    }
+  }, []);
+
+  // ✅ Keep auth in sync after login/logout in other tabs or when returning to this tab
+  useEffect(() => {
+    const refreshAuth = () => setAuth(getAuth());
+    if (typeof window !== "undefined") {
+      window.addEventListener("focus", refreshAuth);
+      window.addEventListener("storage", refreshAuth);
+    }
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("focus", refreshAuth);
+        window.removeEventListener("storage", refreshAuth);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -70,7 +93,7 @@ export default function Home() {
     return properties.filter((p) => {
       const title = asText(p.title);
       const location = asText(p.location || p.area);
-      const type = asText(p.type);
+      const type = asText(p.propertyType || p.type);
 
       if (metric === "title") return title.includes(q);
       if (metric === "location") return location.includes(q);
@@ -79,6 +102,54 @@ export default function Home() {
       return title.includes(q) || location.includes(q) || type.includes(q);
     });
   }, [properties, query, metric]);
+
+  const suggestions = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (q.length < 3) return [];
+
+    const unique = new Set();
+    const add = (value) => {
+      const text = String(value ?? "").trim();
+      if (text) unique.add(text);
+    };
+
+    properties.forEach((p) => {
+      const title = p.title;
+      const location = p.location || p.area;
+      const type = p.propertyType || p.type;
+
+      if (metric === "title") {
+        add(title);
+        return;
+      }
+      if (metric === "location") {
+        add(location);
+        return;
+      }
+      if (metric === "type") {
+        add(type);
+        return;
+      }
+      if (metric === "priceMax") {
+        if (p.price !== undefined && p.price !== null) add(`KES ${p.price}`);
+        return;
+      }
+
+      add(title);
+      add(location);
+      add(type);
+    });
+
+    return [...unique]
+      .filter((value) => value.toLowerCase().includes(q))
+      .slice(0, 8);
+  }, [properties, query, metric]);
+
+  // ✅ landlord/agent-only link visibility (your user uses userType)
+  const isLandlordOrAgent = useMemo(() => {
+    const t = String(auth?.user?.userType || "").toLowerCase();
+    return t === "landlord" || t === "agent";
+  }, [auth]);
 
   const onLogout = () => {
     logout();
@@ -104,17 +175,27 @@ export default function Home() {
             Favorites
           </Link>
 
-          {auth.token ? (
-            <button
-              onClick={onLogout}
-              className="underline decoration-red-400 underline-offset-4 text-red-700 hover:decoration-red-700 hover:text-red-800 transition"
-            >
-              Logout
-            </button>
-          ) : (
-            <Link className={linkClass} href="/login">
-              Login
+          {authReady && auth.token && isLandlordOrAgent && (
+            <Link className={linkClass} href="/my-properties">
+              My Listings
             </Link>
+          )}
+
+          {authReady ? (
+            auth.token ? (
+              <button
+                onClick={onLogout}
+                className="underline decoration-red-400 underline-offset-4 text-red-700 hover:decoration-red-700 hover:text-red-800 transition"
+              >
+                Logout
+              </button>
+            ) : (
+              <Link className={linkClass} href="/login">
+                Login
+              </Link>
+            )
+          ) : (
+            <span className="opacity-60">…</span>
           )}
         </nav>
       </header>
@@ -122,19 +203,43 @@ export default function Home() {
       {/* Search bar */}
       <div className="mx-auto w-full max-w-6xl mt-4 rounded-2xl bg-[var(--taupe-300)] p-3 sm:p-4">
         <div className="flex flex-col gap-3 sm:flex-row">
-          <input
-            className={controlClass}
-            placeholder="Search properties…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
+          <div className="relative w-full">
+            <input
+              className={controlClass}
+              placeholder="Search properties…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onFocus={() => setShowSuggestions(true)}
+              onBlur={() => {
+                setTimeout(() => setShowSuggestions(false), 120);
+              }}
+            />
 
-          {/* select wrapper makes it look cleaner on mobile */}
+            {showSuggestions &&
+              query.trim().length >= 3 &&
+              suggestions.length > 0 && (
+                <ul className="absolute z-20 mt-2 w-full overflow-hidden rounded-2xl bg-white shadow-lg ring-1 ring-black/10">
+                  {suggestions.map((option) => (
+                    <li key={option}>
+                      <button
+                        type="button"
+                        className="block w-full px-4 py-2 text-left text-sm text-zinc-900 hover:bg-neutral-100"
+                        onMouseDown={() => {
+                          setQuery(option);
+                          setShowSuggestions(false);
+                        }}
+                      >
+                        {option}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+          </div>
+
           <div className="relative w-full sm:w-56">
             <select
-              className={
-                "appearance-none pr-10 " + controlClass
-              }
+              className={"appearance-none pr-10 " + controlClass}
               value={metric}
               onChange={(e) => setMetric(e.target.value)}
             >
@@ -145,7 +250,6 @@ export default function Home() {
               <option value="priceMax">Max price (KES)</option>
             </select>
 
-            {/* simple dropdown indicator */}
             <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-gray-700">
               ▾
             </span>
@@ -201,7 +305,7 @@ export default function Home() {
 
                 <div className="mt-3 flex items-center justify-between gap-2">
                   <span className="rounded-full bg-neutral-300 px-3 py-1 text-xs font-medium">
-                    {p.type || "Listing"}
+                    {p.propertyType || p.type || "Listing"}
                   </span>
                   <span className="text-sm font-semibold">
                     {p.price ? `KES ${p.price}` : ""}
