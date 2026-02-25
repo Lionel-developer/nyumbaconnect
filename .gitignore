@@ -1,0 +1,7 @@
+
+# Mongo / local DB data (do NOT commit)
+data/
+mongo-data/
+**/WiredTiger*
+**/*.wt
+**/journal/
