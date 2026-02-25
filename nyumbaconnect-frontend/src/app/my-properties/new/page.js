@@ -38,6 +38,7 @@ function cleanNumber(v) {
   const n = Number(String(v ?? "").replace(/[^\d.]/g, ""));
   return Number.isFinite(n) ? n : undefined;
 }
+
 function sanitizePropertyForm(form) {
   const title = cleanText(form.title);
   const description = cleanText(form.description);
@@ -77,7 +78,7 @@ function sanitizePropertyForm(form) {
 export default function NewPropertyPage() {
   const router = useRouter();
 
-  // ✅ stable initial values
+  // ✅ stable initial values (prevents hydration mismatch)
   const [auth, setAuth] = useState({ token: null, user: null });
   const [authReady, setAuthReady] = useState(false);
 
@@ -101,7 +102,6 @@ export default function NewPropertyPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  // ✅ load auth after mount (avoids hydration mismatch)
   useEffect(() => {
     try {
       setAuth(getAuth());
@@ -110,12 +110,9 @@ export default function NewPropertyPage() {
     }
   }, []);
 
-  // ✅ redirect only after auth is known
   useEffect(() => {
     if (!authReady) return;
-    if (!auth.token) {
-      router.push("/login?next=/my-properties/new");
-    }
+    if (!auth.token) router.push("/login?next=/my-properties/new");
   }, [authReady, auth.token, router]);
 
   const isLandlordOrAgent = useMemo(() => {
@@ -154,7 +151,9 @@ export default function NewPropertyPage() {
       setBusy(true);
       const res = await api.post("/api/properties", payload);
       const newId = res.data?.data?.property?._id;
-      router.push(newId ? `/properties/${newId}` : "/my-properties");
+
+      // ✅ Go to edit page so landlord can upload images immediately
+      router.push(newId ? `/my-properties/${newId}/edit` : "/my-properties");
     } catch (err) {
       setError(err?.response?.data?.message || "Failed to create property");
     } finally {
@@ -162,7 +161,6 @@ export default function NewPropertyPage() {
     }
   };
 
-  // ✅ stable screen while auth loads (prevents mismatch)
   if (!authReady) {
     return (
       <main className="min-h-screen bg-neutral-300 text-zinc-900 px-4 py-5 sm:px-6">
@@ -171,7 +169,6 @@ export default function NewPropertyPage() {
     );
   }
 
-  // ✅ if not logged in, redirect effect will run — keep UI stable
   if (!auth.token) {
     return (
       <main className="min-h-screen bg-neutral-300 text-zinc-900 px-4 py-5 sm:px-6">
@@ -345,6 +342,10 @@ export default function NewPropertyPage() {
             >
               {busy ? "Creating…" : "Create property"}
             </button>
+
+            <p className="text-xs opacity-70">
+              After creating, you’ll be taken to edit page to upload images.
+            </p>
           </div>
         </form>
       </div>
